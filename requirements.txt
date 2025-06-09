@@ -1,0 +1,15 @@
+# Core LangChain packages
+langchain-core>=0.1.50
+langchain-community>=0.0.30
+langgraph>=0.0.41  # ensure it matches langchain-core version compatibility
+# Google GenAI (Gemini)
+langchain-google-genai>=0.0.9
+# Utility libraries
+pyperclip>=1.8.2
+pyautogui>=0.9.54
+python-dotenv>=1.0.1
+# Tavily search (included in langchain-community)
+tavily-python>=0.3.0
+# Required by your script
+pillow>=10.3.0  # For image encoding via BytesIO
+
