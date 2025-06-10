@@ -11,6 +11,8 @@ TEXT_COLOR_NORMAL = PRIMARY_COLOR
 TEXT_COLOR_ACTIVE = "white"
 CLOSE_BUTTON_COLOR = "#FF3B30"
 CHAT_BG = "#2B2B2B"
+AI_SENDER_COLOR = "#57A6FF"
+USER_SENDER_COLOR = "#34D399"
 
 # --- Scrollbar dark theme colors ---
 SCROLLBAR_TROUGH = "#2E2E2E"
@@ -84,12 +86,62 @@ class ChatWindow(tk.Toplevel):
         if self.focus_get() is None:
             self.minimize_window()
 
+    def insert_with_bold(self, text_area, line):
+        import re
+        pattern = r"\*\*(.*?)\*\*"  # matches **bold**
+        idx = 0
+        for match in re.finditer(pattern, line):
+            start, end = match.span()
+            # Insert text before bold part
+            if start > idx:
+                text_area.insert(tk.END, line[idx:start])
+            # Insert bold part
+            bold_text = match.group(1)
+            text_area.insert(tk.END, bold_text, "bold")
+            idx = end
+        # Insert remaining text
+        if idx < len(line):
+            text_area.insert(tk.END, line[idx:])
+
+    def format_message(self, text_area, message):
+        import re
+
+        # Define tag styles (ensure this is only done once in your init)
+        text_area.tag_configure("bold", font=font.Font(weight="bold"))
+        text_area.tag_configure("bullet", lmargin1=15, lmargin2=30)
+
+        # Split by lines to handle bullets
+        for line in message.splitlines():
+            # Match bullet points
+            if re.match(r"^\* ", line):
+                content = line[2:].strip()
+                text_area.insert(tk.END, "• ", "bullet")
+                self.insert_with_bold(text_area, content)
+                text_area.insert(tk.END, "\n")
+            else:
+                self.insert_with_bold(text_area, line)
+                text_area.insert(tk.END, "\n")
+
     def add_message(self, sender, message):
         self.text_area.config(state="normal")
+
         sender_font = font.Font(family="Arial", size=12, weight="bold")
-        self.text_area.tag_configure("sender_tag", font=sender_font)
-        self.text_area.insert(tk.END, f"{sender}: ", "sender_tag")
-        self.text_area.insert(tk.END, f"{message}\n\n")
+
+        if sender == "AI":
+            tag_name = "ai_sender"
+            color = AI_SENDER_COLOR
+        else:
+            tag_name = "user_sender"
+            color = USER_SENDER_COLOR
+
+        self.text_area.tag_configure(tag_name, font=sender_font, foreground=color)
+
+        self.text_area.insert(tk.END, f"{sender}: ", tag_name)
+
+        # 👇 Format and insert message with styling
+        self.format_message(self.text_area, message)
+
+        self.text_area.insert(tk.END, "\n")
         self.text_area.config(state="disabled")
         self.text_area.see(tk.END)
 
