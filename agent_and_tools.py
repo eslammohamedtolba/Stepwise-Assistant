@@ -11,7 +11,7 @@ import base64
 from io import BytesIO
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 load_dotenv()
 
@@ -205,7 +205,7 @@ def GetSystemInfo() -> str:
             Hostname: {socket.gethostname()}"
 
 @tool
-def SeeScreen() -> str:
+def SeeScreen(ScreenFocus: str = None) -> str:
     """
     SeeScreen is a powerful visual perception tool that allows the agent to observe the current screen context
     through an in-memory screenshot and interpret its content using Gemini's advanced vision-language capabilities.
@@ -223,8 +223,13 @@ def SeeScreen() -> str:
     Agents are strongly encouraged to call this tool **whenever screen context is important**, 
     especially when decisions, suggestions, or actions depend on what is being visually displayed.
 
+    Args:
+        ScreenFocus (str, optional): A specific question or area to focus on within the screenshot. 
+                                     If not provided, a general description of the screen will be returned. 
+                                     Example: "What is the error message in the terminal?"
+
     Returns:
-        str: A rich and structured textual description of the current screen content.
+        str: A rich and structured textual description of the current screen content or a direct answer to the ScreenFocus question.
     """
     # Capture screenshot using pyautogui
     screenshot = pyautogui.screenshot()
@@ -235,24 +240,35 @@ def SeeScreen() -> str:
     img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
     data_url = f"data:image/png;base64,{img_base64}"
 
-    # Compose professional multimodal prompt
-    message = HumanMessage(
-        content=[
-            {
-                "type": "text",
-                "text": (
-                    "You are an expert visual assistant. Analyze the following screenshot and provide a clear, structured "
-                    "description of what is visible. Mention any open applications, UI components, readable text, and "
-                    "overall screen layout. Be as detailed and organized as possible to help another agent understand "
-                    "what the user is currently seeing."
-                )
-            },
-            {"type": "image_url", "image_url": data_url}
-        ]
-    )
+    # Conditionally create the prompt based on whether a focus is provided
+    if ScreenFocus:
+        # If the user asks a specific question, the system prompt is more direct.
+        system_text = (
+            "You are an expert visual assistant. The user has a specific question about the attached screenshot. "
+            "Analyze the image and answer their question directly and concisely. Do not describe what you need or ask for clarification, just provide the answer."
+        )
+    else:
+        # If no focus is provided, use the general description prompt.
+        system_text = (
+            "You are an expert visual assistant. Analyze the following screenshot and provide a clear, structured "
+            "description of what is visible. Mention any open applications, UI components, readable text, and "
+            "overall screen layout. Be as detailed and organized as possible to help another agent understand "
+            "what the user is currently seeing."
+        )
 
-    # Send to Gemini and return description
-    response = llm.invoke([message])
+    # The main instructions are now a SystemMessage
+    system_message = SystemMessage(content=system_text)
+    
+    # The user's specific question (if any) and the image are in the HumanMessage
+    human_content = []
+    if ScreenFocus:
+        human_content.append({"type": "text", "text": ScreenFocus})
+    human_content.append({"type": "image_url", "image_url": data_url})
+    
+    human_message = HumanMessage(content=human_content)
+
+    # Send the structured messages to Gemini and return the description
+    response = llm.invoke([system_message, human_message])
     return response.content
 
 
@@ -270,5 +286,4 @@ all_tools = [Save,
 
 # Create agent 🤖
 agent = llm.bind_tools(all_tools)
-
 
