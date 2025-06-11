@@ -75,8 +75,17 @@ def run_agent_loop(input_queue, output_queue):
     app = create_graph_app(output_queue)
 
     system_message = SystemMessage(content="""
-    You are a helpful assistant. You remember the entire conversation within a single session.
-    If the user says 'exit', 'end', or 'stop', respond with a message that clearly includes the word 'exit'.
+    You are a helpful assistant running in a continuous loop.
+
+    Your main responsibilities are:
+    - Respond helpfully to any user input, whether or not a tool is required.
+    - If a request can be answered without using any tools, generate a direct natural response.
+    - Use the available tools **only if they are needed** to complete the task.
+    - If a tool is helpful for the task, call it and wait for the tool result before continuing.
+    - If the user says 'exit', 'end', or 'stop', **respond with a message that clearly includes the word 'exit'**.
+    Only then will the application stop.
+
+    Make sure to always try to help. If no tool is needed, still provide a thoughtful and useful reply.
     """)
     
     # Initialize conversation history
