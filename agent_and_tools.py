@@ -13,6 +13,12 @@ from io import BytesIO
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
+import subprocess
+import glob
+import zipfile
+from PIL import Image
+import mss
+import pygetwindow as gw
 
 load_dotenv()
 
@@ -34,7 +40,7 @@ def get_username() -> str:
     return getpass.getuser()
 
 @tool
-def Save(clipboard_content: str):
+def Save_to_clipboard(clipboard_content: str):
     """This is a function to save the content to the user clipboard.
     
     Args:
@@ -43,6 +49,19 @@ def Save(clipboard_content: str):
     pyperclip.copy(clipboard_content)
 
     return "Content has been copied to the clipboard."
+
+@tool
+def get_clipboard_content() -> str:
+    """
+    Retrieves the current content from the system clipboard.
+    
+    Returns:
+        The text content of the clipboard.
+    """
+    try:
+        return pyperclip.paste()
+    except Exception as e:
+        return f"Error reading from clipboard: {str(e)}"
 
 @tool
 def list_directory_tree(path: str, depth: int = 0) -> str:
@@ -75,6 +94,29 @@ def list_directory_tree(path: str, depth: int = 0) -> str:
 
     walk(path, 0)
     return "\n".join(tree_lines)
+
+@tool
+def find_files(start_dir: str, pattern: str) -> str:
+    """
+    Finds files matching a specific pattern within a directory and its subdirectories.
+
+    Args:
+        start_dir: The directory to start the search from.
+        pattern: The search pattern to match (e.g., '*.txt', 'report.*', 'image_?.png').
+                 Uses standard glob patterns.
+
+    Returns:
+        A string listing the matching file paths, or a message if none are found.
+    """
+    try:
+        # Use recursive glob to find all matching files
+        results = glob.glob(os.path.join(start_dir, f"**/{pattern}"), recursive=True)
+        if not results:
+            return f"No files found matching '{pattern}' in '{start_dir}'."
+        
+        return "Found files:\n" + "\n".join(results)
+    except Exception as e:
+        return f"An error occurred while searching for files: {str(e)}"
 
 @tool
 def Create(path: str, name: str) -> str:
@@ -195,12 +237,42 @@ def Read(path: str, file_name: str) -> str:
         return f"Error: {str(e)}"
 
 @tool
+def open_file_or_app(path: str) -> str:
+    """
+    Opens a file with its default application or launches an application.
+
+    This function can be used to:
+    - Open a document (e.g., 'C:\\Users\\hp\\Documents\\report.docx')
+    - Open an image or video
+    - Launch an executable application (e.g., 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe')
+    - Open a folder in the file explorer.
+
+    Args:
+        path: The full path to the file or application.
+
+    Returns:
+        A success or error message.
+    """
+    try:
+        if not os.path.exists(path):
+            return f"Error: The path '{path}' does not exist."
+
+        if platform.system() == "Windows":
+            os.startfile(path)
+        elif platform.system() == "Darwin":  # macOS
+            subprocess.run(["open", path], check=True)
+        else:  # Linux
+            subprocess.run(["xdg-open", path], check=True)
+            
+        return f"Successfully opened or launched '{path}'."
+    except Exception as e:
+        return f"Error opening file or application: {str(e)}"
+
+
+@tool
 def Current_time() -> str:
     """Returns the current date and time as a formatted string."""
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-# Create the Tavily search tool
-search_tool = TavilySearchResults(max_results=5)
 
 @tool
 def GetSystemInfo() -> str:
@@ -219,80 +291,224 @@ def GetSystemInfo() -> str:
 @tool
 def SeeScreen(ScreenFocus: str = None) -> str:
     """
-    SeeScreen is a powerful visual perception tool that allows the agent to observe the current screen context
-    through an in-memory screenshot and interpret its content using Gemini's advanced vision-language capabilities.
+    Analyzes the screen content using an optimized, high-speed capture method.
+    
+    This upgraded tool captures the screen, resizes the image for efficiency,
+    and uses a vision-language model to provide a detailed description or
+    answer a specific question about the on-screen content. It is significantly
+    faster and more efficient than a standard screenshot.
 
-    The tool captures the entire screen without saving the image to disk and immediately processes it with
-    a multimodal LLM to extract a detailed description of what is visually present, including UI elements,
-    open windows, visual cues, and text content.
-
-    This tool is especially useful for agents needing to:
-    - Understand the current user interface
-    - Respond to visual prompts on the screen
-    - Monitor workflows, apps, or web pages in real time
-    - Provide contextual assistance based on what the user is viewing
-
-    Agents are strongly encouraged to call this tool **whenever screen context is important**, 
-    especially when decisions, suggestions, or actions depend on what is being visually displayed.
+    This tool is essential for understanding the current user interface,
+    responding to visual prompts, or providing context-aware assistance.
 
     Args:
-        ScreenFocus (str, optional): A specific question or area to focus on within the screenshot. 
-                                     If not provided, a general description of the screen will be returned. 
-                                     Example: "What is the error message in the terminal?"
+        ScreenFocus (str, optional): A specific question or area to focus on 
+                                     within the screenshot. If not provided, a 
+                                     general description of the screen will be 
+                                     returned. Example: "What is the error message?"
 
     Returns:
-        str: A rich and structured textual description of the current screen content or a direct answer to the ScreenFocus question.
+        A rich textual description of the screen or a direct answer to the ScreenFocus question.
     """
-    # Capture screenshot using pyautogui
-    screenshot = pyautogui.screenshot()
+    try:
+        # --- OPTIMIZATION 1: Use the ultra-fast mss library for screen capture ---
+        with mss.mss() as sct:
+            # Get a raw BGRA buffer of the primary monitor
+            sct_img = sct.grab(sct.monitors[1])
+            # Convert the raw BGRA data to a Pillow Image object
+            screenshot = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
 
-    # Convert screenshot to base64 data URL (in-memory)
-    buffered = BytesIO()
-    screenshot.save(buffered, format="PNG")
-    img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-    data_url = f"data:image/png;base64,{img_base64}"
+        # --- OPTIMIZATION 2: Resize the image if it's larger than 1080p ---
+        max_size = (1920, 1080)
+        screenshot.thumbnail(max_size, Image.Resampling.LANCZOS)
 
-    # Conditionally create the prompt based on whether a focus is provided
-    if ScreenFocus:
-        # If the user asks a specific question, the system prompt is more direct.
-        system_text = (
-            "You are an expert visual assistant. The user has a specific question about the attached screenshot. "
-            "Analyze the image and answer their question directly and concisely. Do not describe what you need or ask for clarification, just provide the answer."
-        )
-    else:
-        # If no focus is provided, use the general description prompt.
-        system_text = (
-            "You are an expert visual assistant. Analyze the following screenshot and provide a clear, structured "
-            "description of what is visible. Mention any open applications, UI components, readable text, and "
-            "overall screen layout. Be as detailed and organized as possible to help another agent understand "
-            "what the user is currently seeing."
-        )
+        # Convert screenshot to base64 data URL (in-memory)
+        buffered = BytesIO()
+        # --- OPTIMIZATION 3: Save as JPEG for smaller file size ---
+        screenshot.save(buffered, format="JPEG", quality=90) # Quality set to 90
+        img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        data_url = f"data:image/jpeg;base64,{img_base64}"
 
-    # The main instructions are now a SystemMessage
-    system_message = SystemMessage(content=system_text)
+        # Conditionally create the prompt based on whether a focus is provided
+        if ScreenFocus:
+            system_text = (
+                "You are an expert visual assistant. The user has a specific question about the attached screenshot. "
+                "Analyze the image and answer their question directly and concisely. Do not describe what you see unless it's the answer. Just provide the answer."
+            )
+        else:
+            system_text = (
+                "You are an expert visual assistant. Analyze the following screenshot and provide a clear, structured "
+                "description of what is visible. Mention any open applications, UI components, readable text, and "
+                "overall screen layout. Be as detailed and organized as possible to help another agent understand "
+                "what the user is currently seeing."
+            )
+        
+        system_message = SystemMessage(content=system_text)
+        
+        human_content = []
+        if ScreenFocus:
+            human_content.append({"type": "text", "text": ScreenFocus})
+        human_content.append({"type": "image_url", "image_url": data_url})
+        
+        human_message = HumanMessage(content=human_content)
+
+        # Send the structured messages to Gemini and return the description
+        response = llm.invoke([system_message, human_message])
+        return response.content
+    except Exception as e:
+        return f"An error occurred while analyzing the screen: {str(e)}"
+
+@tool
+def get_active_window_title() -> str:
+    """
+    Retrieves the title of the currently active (focused) window on the screen.
+
+    This tool is highly efficient for understanding the user's current context, 
+    such as which application (e.g., 'Google Chrome', 'File Explorer', 'Visual Studio Code')
+    or which specific document ('report-final.docx - Microsoft Word') they are 
+    currently working on. It should be used before SeeScreen if the goal is
+    just to identify the application the user is in.
+
+    Returns:
+        A string containing the title of the active window, or a message if none is found.
+    """
+    try:
+        active_window = gw.getActiveWindow()
+        if active_window:
+            return f"The current active window is: '{active_window.title}'"
+        else:
+            # This case is rare on modern OSes but good to have.
+            return "No active window found."
+    except Exception as e:
+        # This can happen if the window closes while the function is running
+        return f"An error occurred while getting the active window title: {str(e)}"
+
+@tool
+def execute_shell_command(command: str) -> str:
+    """
+    Executes a shell command in the terminal and returns the output.
     
-    # The user's specific question (if any) and the image are in the HumanMessage
-    human_content = []
-    if ScreenFocus:
-        human_content.append({"type": "text", "text": ScreenFocus})
-    human_content.append({"type": "image_url", "image_url": data_url})
-    
-    human_message = HumanMessage(content=human_content)
+    This tool is extremely powerful and can be used to run any command-line
+    instruction on the user's operating system. It can be used for a wide
+    range of tasks, such as:
+    - Running scripts (e.g., 'python my_script.py')
+    - Managing system processes (e.g., 'tasklist' or 'ps aux')
+    - Using developer tools (e.g., 'git status', 'npm install')
+    - Getting network information (e.g., 'ipconfig' or 'ifconfig')
 
-    # Send the structured messages to Gemini and return the description
-    response = llm.invoke([system_message, human_message])
-    return response.content
+    Args:
+        command: The command to execute as a string.
+
+    Returns:
+        A string containing the standard output and standard error from the command.
+    """
+    try:
+        # For security and to prevent hanging, use a timeout
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=120,  # 2-minute timeout
+            check=False # Do not raise an exception on non-zero exit codes
+        )
+        output = ""
+        if result.stdout:
+            output += f"STDOUT:\n{result.stdout}\n"
+        if result.stderr:
+            output += f"STDERR:\n{result.stderr}\n"
+        if not output:
+            return "Command executed successfully with no output."
+        return output
+    except FileNotFoundError:
+        return f"Error: Command '{command.split()[0]}' not found. Make sure it is in your system's PATH."
+    except subprocess.TimeoutExpired:
+        return "Error: Command timed out after 120 seconds."
+    except Exception as e:
+        return f"An unexpected error occurred: {str(e)}"
+
+@tool
+def zip_files(source_path: str, output_zip_path: str) -> str:
+    """
+    Compresses a single file or an entire directory into a .zip archive.
+
+    Args:
+        source_path: The full path to the source file or directory to be zipped.
+        output_zip_path: The full path for the output .zip file (e.g., 'C:\\Users\\hp\\Desktop\\archive.zip').
+
+    Returns:
+        A success or error message.
+    """
+    try:
+        with zipfile.ZipFile(output_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            if os.path.isdir(source_path):
+                for root, _, files in os.walk(source_path):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, start=source_path)
+                        zipf.write(file_path, arcname=arcname)
+            else: # It's a single file
+                zipf.write(source_path, arcname=os.path.basename(source_path))
+        return f"Successfully created zip file: {output_zip_path}"
+    except Exception as e:
+        return f"Error creating zip file: {str(e)}"
+
+@tool
+def unzip_file(zip_path: str, destination_dir: str) -> str:
+    """
+    Extracts the contents of a .zip file to a specified directory.
+
+    Args:
+        zip_path: The full path to the .zip file to be extracted.
+        destination_dir: The directory where the contents should be extracted.
+
+    Returns:
+        A success or error message.
+    """
+    try:
+        os.makedirs(destination_dir, exist_ok=True)
+        with zipfile.ZipFile(zip_path, 'r') as zipf:
+            zipf.extractall(destination_dir)
+        return f"Successfully extracted '{zip_path}' to '{destination_dir}'."
+    except Exception as e:
+        return f"Error extracting zip file: {str(e)}"
+
+@tool
+def type_on_screen(text_to_type: str, interval_seconds: float = 0.05) -> str:
+    """
+    Types the given text into the currently active window, simulating keyboard input.
+    This is useful for filling out forms, writing in text editors, or entering commands.
+
+    Make sure the desired window/input field is in focus before calling this tool.
+
+    Args:
+        text_to_type: The string of text to type.
+        interval_seconds: The time to wait between each keystroke.
+
+    Returns:
+        A success message.
+    """
+    try:
+        pyautogui.write(text_to_type, interval=interval_seconds)
+        return "Text typed successfully."
+    except Exception as e:
+        return f"An error occurred while typing: {str(e)}"
+
+# Create the Tavily search tool
+search_tool = TavilySearchResults(max_results=5)
 
 
 
 # Combine all tools
 all_tools = [get_username, GetSystemInfo, 
-        Save, list_directory_tree,
-        Delete, Create, Move, Rename, 
-        Write, Read,
+        Save_to_clipboard, get_clipboard_content, 
+        list_directory_tree, find_files, 
+        Delete, Create, Move, Rename,
+        Write, Read, open_file_or_app,
         search_tool,
-        Current_time,
-        SeeScreen]
+        Current_time, SeeScreen, get_active_window_title, 
+        zip_files, unzip_file,
+        execute_shell_command]
 
 
 # Create agent 🤖
