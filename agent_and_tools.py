@@ -8,6 +8,7 @@ from langchain_community.tools import TavilySearchResults
 import platform
 import socket
 import base64
+import getpass
 from io import BytesIO
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
@@ -20,6 +21,17 @@ llm = ChatGoogleGenerativeAI(
     model = "gemini-2.5-flash-preview-05-20",
     temperature = 0
 )
+
+@tool
+def get_username() -> str:
+    """
+    Retrieves the current Windows username of the person 
+    running this script. This is typically the name of the 
+    user's home directory (e.g., 'C:\\Users\\hp') and can be 
+    used for personalization, file path construction, or 
+    system identification in LangGraph applications.
+    """
+    return getpass.getuser()
 
 @tool
 def Save(clipboard_content: str):
@@ -274,13 +286,12 @@ def SeeScreen(ScreenFocus: str = None) -> str:
 
 
 # Combine all tools
-all_tools = [Save, 
-        list_directory_tree,
+all_tools = [get_username, GetSystemInfo, 
+        Save, list_directory_tree,
         Delete, Create, Move, Rename, 
         Write, Read,
         search_tool,
         Current_time,
-        GetSystemInfo,
         SeeScreen]
 
 
