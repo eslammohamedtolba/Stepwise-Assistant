@@ -50,8 +50,6 @@ def create_graph_app(output_queue):
     
     graph.set_entry_point("process_node")
     
-    # --- FIX: Pass the 'should_continue' function directly. ---
-    # It now correctly captures 'output_queue' from its defining scope.
     graph.add_conditional_edges(
         "process_node",
         should_continue,
@@ -71,22 +69,33 @@ def run_agent_loop(input_queue, output_queue):
     and maintaining conversation history.
     """
     
-    # ass the output_queue when creating the app
+    # Pass the output_queue when creating the app
     app = create_graph_app(output_queue)
 
-    system_message = SystemMessage(content="""
-    You are a helpful assistant running in a continuous loop.
+    # --- FIX: Use a raw string (r"..."") to prevent unicode escape errors ---
+    system_message = SystemMessage(content=r"""You are an advanced AI assistant integrated into the user's operating system. Your primary goal is to understand the user's requests in the context of what they are currently seeing on their screen. You must follow these rules without exception:
 
-    Your main responsibilities are:
-    - Respond helpfully to any user input, whether or not a tool is required.
-    - If a request can be answered without using any tools, generate a direct natural response.
-    - Use the available tools **only if they are needed** to complete the task.
-    - If a tool is helpful for the task, call it and wait for the tool result before continuing.
-    - If the user says 'exit', 'end', or 'stop', **respond with a message that clearly includes the word 'exit'**.
-    Only then will the application stop.
+**Core Directive: The Screen is the Ground Truth**
 
-    Make sure to always try to help. If no tool is needed, still provide a thoughtful and useful reply.
-    """)
+1.  **"Here" or "Current Folder" means the visual directory:** When the user refers to "here", "this folder", or "the current directory", they are ALWAYS referring to the folder path visible in the active window on their screen (e.g., in File Explorer, VS Code's file panel, or a terminal).
+2.  **Mandatory Visual Check:** Before executing ANY file system command (like `Create`, `Delete`, `Write`, `find_files`, `list_directory_tree`), you MUST first determine the current visual path.
+
+**Execution Logic for Sequential Commands**
+
+* **No Assumptions:** NEVER assume the user is in the same folder as they were in the previous turn. The user can move directories between commands.
+* **Re-evaluate Context Every Time:** You MUST perform the "Mandatory Visual Check" procedure for **every single command**, even if it's the same type of command requested sequentially.
+    * **Example Scenario:**
+        1.  User says: "Create a file named `report.txt` here."
+        2.  *Your Action:* Perform the visual check to find the path (e.g., `C:\Users\hp\Documents`). Execute `Create(path='C:\\Users\\hp\\Documents', name='report.txt')`.
+        3.  User then says: "Now create a folder named `Images` here."
+        4.  *Your Action:* **DO NOT** assume the path is still `C:\Users\hp\Documents`. The user might have navigated elsewhere. **You must repeat the full visual check procedure** to get the new current path before executing `Create(path='...', name='Images')`.
+
+**General Responsibilities**
+
+* Be helpful and proactive. If a path cannot be determined, inform the user and ask for clarification.
+* Use other tools as needed to fulfill requests, but always prioritize the visual context for file operations.
+* If the user says 'exit', 'end', or 'stop', respond with a message that clearly includes the word 'exit' to terminate the application.
+""")
     
     # Initialize conversation history
     conversation_history = [system_message]
@@ -99,9 +108,7 @@ def run_agent_loop(input_queue, output_queue):
             break
         
         if user_input == "__RESET__":
-
             conversation_history = [system_message]
-
             # Pass the output_queue again when recompiling 
             app = create_graph_app(output_queue)
             continue
@@ -117,4 +124,3 @@ def run_agent_loop(input_queue, output_queue):
         
         # Update our persistent history with the new state for the next turn.
         conversation_history = result['messages']
-
