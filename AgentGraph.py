@@ -26,19 +26,32 @@ def create_graph_app(output_queue):
 
     def should_continue(state: MyState):
         """
-        Determines the next step. It has access to 'output_queue'
-        from the parent function's scope.
+        Determines the next step. 
+        It has access to 'output_queue' from the parent function's scope.
         """
         last_message = state['messages'][-1]
 
         if last_message.tool_calls:
             return "tools_node"
 
+        # The final response from the LLM can be a list of content blocks or a simple string.
+        # We must convert it to a single string before any further processing
+        final_content = ""
+        if isinstance(last_message.content, list):
+            # Join list items with a newline for better readability in the GUI
+            final_content = "\n".join(
+                part.get('text', '') if isinstance(part, dict) else str(part)
+                for part in last_message.content
+            )
+        else:
+            # If it's already a string, use it directly (use str() for safety)
+            final_content = str(last_message.content)
+
         # If no tool call, send the agent's final answer to the GUI
-        output_queue.put(("AI", last_message.content))
+        output_queue.put(("AI", final_content))
 
         # Check for exit condition to terminate the entire application
-        if "exit" in last_message.content.lower():
+        if "exit" in final_content.lower():
             output_queue.put(("__EXIT__", "Conversation ended."))
         
         return "end"
