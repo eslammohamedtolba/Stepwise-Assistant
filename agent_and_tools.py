@@ -19,6 +19,15 @@ import zipfile
 from PIL import Image
 import mss
 import pygetwindow as gw
+# Rag dependencies
+from langchain.text_splitter import CharacterTextSplitter
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.prompts import PromptTemplate
+
+
 
 load_dotenv()
 
@@ -311,20 +320,20 @@ def SeeScreen(ScreenFocus: str = None) -> str:
         A rich textual description of the screen or a direct answer to the ScreenFocus question.
     """
     try:
-        # --- OPTIMIZATION 1: Use the ultra-fast mss library for screen capture ---
+        # OPTIMIZATION 1: Use the ultra-fast mss library for screen capture
         with mss.mss() as sct:
             # Get a raw BGRA buffer of the primary monitor
             sct_img = sct.grab(sct.monitors[1])
             # Convert the raw BGRA data to a Pillow Image object
             screenshot = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
 
-        # --- OPTIMIZATION 2: Resize the image if it's larger than 1080p ---
+        # OPTIMIZATION 2: Resize the image if it's larger than 1080p
         max_size = (1920, 1080)
         screenshot.thumbnail(max_size, Image.Resampling.LANCZOS)
 
         # Convert screenshot to base64 data URL (in-memory)
         buffered = BytesIO()
-        # --- OPTIMIZATION 3: Save as JPEG for smaller file size ---
+        # OPTIMIZATION 3: Save as JPEG for smaller file size
         screenshot.save(buffered, format="JPEG", quality=90) # Quality set to 90
         img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
         data_url = f"data:image/jpeg;base64,{img_base64}"
@@ -494,6 +503,116 @@ def type_on_screen(text_to_type: str, interval_seconds: float = 0.05) -> str:
     except Exception as e:
         return f"An error occurred while typing: {str(e)}"
 
+# Create embeddings
+embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+@tool
+def ask_document(content: str, query: str) -> str:
+    """
+    Analyzes a provided block of text ("the document") to answer a specific query.
+
+    This tool is ideal for situations where you need to answer questions based *only* on a specific
+    piece of content, such as the text from a file, a long string from the clipboard, or a previous
+    tool's output. It does not use external knowledge.
+
+    Args:
+        content: The text content (the "document") to be analyzed and queried.
+        query: The specific question to "ask" the document.
+
+    Returns:
+        A string containing the answer to the query, derived exclusively from the content.
+        Returns an error message if the content is too short or an analysis cannot be performed.
+    """
+
+    if not content or not content.strip():
+        return "Error: The provided content is empty. Cannot perform analysis."
+
+    # 1. Split the document into chunks
+    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    docs = text_splitter.create_documents([content])
+
+    # 2. Create an in-memory vector store from the chunks
+    vectorstore = Chroma.from_documents(
+        documents=docs, 
+        embedding=embeddings
+    )
+
+    # 3. Create a retriever from the vector store
+    retriever = vectorstore.as_retriever(
+        search_kwargs={"k": 3},  # Retrieve top 3 chunks
+        search_type = "similarity_score_threshold"
+    )
+
+    # 4. Define the RAG prompt template
+    prompt = PromptTemplate.from_template("""Answer the question based only on the following context:
+        {context}
+
+        Question: {question}
+        """)
+    
+    # 5. Create the RAG chain using LangChain Expression Language (LCEL)
+    rag_chain = (
+        {"context": retriever, "question": RunnablePassthrough()}
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+    
+    # 6. Invoke the chain with the query to get the answer
+    answer = rag_chain.invoke(query)
+
+    # Clean up the in-memory vector store
+    vectorstore.delete_collection()
+
+    return answer
+
+@tool
+def summarize_content(content: str) -> str:
+    """
+    Creates a concise summary of a given block of text.
+
+    This tool is highly effective for condensing long articles, documents, reports,
+    or any other substantial piece of text into its key points. Use it when you
+    need to understand the main ideas of a text without reading it in its entirety.
+
+    Args:
+        content: The string of text that you want to summarize.
+
+    Returns:
+        A string containing a clear and concise summary of the input content.
+    """
+
+    if not content or not content.strip():
+        return "Error: The provided content is empty and cannot be summarized."
+
+    # Define prompt template
+    prompt = PromptTemplate.from_template("""
+    You are an expert summarization engine. Your task is to provide a clear and concise summary of the following content.
+
+    Focus on extracting the main ideas, key arguments, and any important conclusions.
+    Present the summary in a way that is easy to read and understand.
+
+    Content to summarize:
+    ---
+    {content}
+    ---
+
+    Concise Summary:
+    """)
+    
+    # Create the summarization chain using LangChain Expression Language (LCEL)
+    summarizer_chain = (
+        {"content": RunnablePassthrough()}
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+    
+    # Invoke the chain with the content to get the summary
+    summary = summarizer_chain.invoke(content)
+
+    return summary
+
+
 # Create the Tavily search tool
 search_tool = TavilySearchResults(max_results=5)
 
@@ -508,7 +627,8 @@ all_tools = [get_username, GetSystemInfo,
         search_tool,
         Current_time, SeeScreen, get_active_window_title, 
         zip_files, unzip_file,
-        execute_shell_command]
+        execute_shell_command, 
+        ask_document, summarize_content]
 
 
 # Create agent 🤖
