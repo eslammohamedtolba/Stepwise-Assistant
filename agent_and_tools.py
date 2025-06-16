@@ -1,7 +1,7 @@
 import os
 import shutil
-import pyperclip  # pip install pyperclip
-import pyautogui # pip install pyautogui
+import pyperclip
+import pyautogui
 from datetime import datetime
 from langchain_core.tools import tool
 from langchain_community.tools import TavilySearchResults
@@ -19,14 +19,20 @@ import zipfile
 from PIL import Image
 import mss
 import pygetwindow as gw
-# Rag dependencies
+import pypdf
+import docx
+import openpyxl
+import requests
+from bs4 import BeautifulSoup
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.prompts import PromptTemplate
-
+from docx import Document
+from fpdf import FPDF
+import pandas as pd
 
 
 load_dotenv()
@@ -214,36 +220,126 @@ def Rename(path: str, old_name: str, new_name: str) -> str:
 @tool
 def Write(path: str, file_name: str, content: str) -> str:
     """
-    Write content to a file at the specified path and file name.
+    Write content to a file in various formats including .txt, .docx, .pdf, and .xlsx.
+
+    This tool enables writing structured or unstructured text to a file in the desired format,
+    depending on the extension specified in the file name. It supports:
+
+    - .txt: Saves the content as plain text.
+    - .docx: Writes the content to a Microsoft Word document.
+    - .pdf: Converts the text content into a PDF file with basic formatting.
+    - .xlsx: Stores the content in an Excel spreadsheet, splitting lines into rows and tab-separated fields into columns.
+
+    If the target directory does not exist, it will be created automatically.
 
     Args:
-        path: The directory where the file is located or should be created.
-        file_name: The name of the file (including extension).
-        content: The text content to write into the file.
+        path (str): The directory where the file should be created or saved.
+        file_name (str): The full name of the file including its extension.
+        content (str): The text content to be written into the file.
+
+    Returns:
+        str: A success message indicating where the file was saved, or an error message in case of failure.
     """
     try:
+        os.makedirs(path, exist_ok=True)
         full_path = os.path.join(path, file_name)
-        with open(full_path, 'w', encoding='utf-8') as f:
-            f.write(content)
+        ext = os.path.splitext(file_name)[-1].lower()
+
+        if ext == '.txt':
+            with open(full_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+        elif ext == '.docx':
+            doc = Document()
+            for line in content.splitlines():
+                doc.add_paragraph(line)
+            doc.save(full_path)
+
+        elif ext == '.pdf':
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_auto_page_break(auto=True, margin=15)
+            pdf.set_font("Arial", size=12)
+            for line in content.splitlines():
+                pdf.multi_cell(0, 10, line)
+            pdf.output(full_path)
+
+        elif ext == '.xlsx':
+            df = pd.DataFrame([line.split('\t') for line in content.splitlines()])
+            df.to_excel(full_path, index=False, header=False)
+
+        else:
+            return "Unsupported file type."
+
         return f"Content written to: {full_path}"
+
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error writing file: {str(e)}"
 
 @tool
 def Read(path: str, file_name: str) -> str:
     """
-    Read content from a file.
+    Reads and extracts the text content from various file types, including plain text,
+    PDF, Microsoft Word (.docx), and Microsoft Excel (.xlsx, xlsm).
+
+    This tool automatically detects the file type based on its extension and uses the
+    appropriate method to extract all readable text.
 
     Args:
         path: The directory where the file is located.
-        file_name: The name of the file (including extension).
+        file_name: The name of the file (including its extension, e.g., 'report.pdf').
+
+    Returns:
+        A string containing all the extracted text from the file.
+        Returns an error message if the file is not found or the format is unsupported.
     """
+
+    full_path = os.path.join(path, file_name)
     try:
-        full_path = os.path.join(path, file_name)
-        with open(full_path, 'r', encoding='utf-8') as f:
-            return f.read()
+        _, extension = os.path.splitext(file_name)
+        extension = extension.lower()
+
+        content = ""
+
+        # Handle PDF files
+        if extension == '.pdf':
+            with open(full_path, 'rb') as f:
+                reader = pypdf.PdfReader(f)
+                for page in reader.pages:
+                    content += page.extract_text() or ''
+            return content
+
+        # Handle Word documents
+        elif extension == '.docx':
+            doc = docx.Document(full_path)
+            for para in doc.paragraphs:
+                content += para.text + '\n'
+            return content
+
+        # Handle Excel files - reads all cells from all sheets
+        elif extension in ['.xlsx', '.xlsm']:
+            workbook = openpyxl.load_workbook(full_path)
+            for sheet_name in workbook.sheetnames:
+                sheet = workbook[sheet_name]
+                for row in sheet.iter_rows():
+                    for cell in row:
+                        if cell.value is not None:
+                            content += str(cell.value) + ' '
+                    content += '\n'
+            return content
+        
+        # Handle plain text files as the default
+        elif extension == '.txt':
+            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                return f.read()
+        
+        else:
+            return "Unsupported file type."
+
+    except FileNotFoundError:
+        return f"Error: The file '{full_path}' was not found."
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error reading file '{full_path}': {str(e)}"
 
 @tool
 def open_file_or_app(path: str) -> str:
@@ -612,6 +708,49 @@ def summarize_content(content: str) -> str:
 
     return summary
 
+@tool
+def SmartWebScraper(link: str) -> str:
+    """
+    Extract meaningful text content from a given webpage,
+    focusing on important HTML elements such as paragraphs, headings, lists,
+    quotes, and code blocks.
+
+    This tool is optimized for extracting the core readable content from articles,
+    documentation, blog posts, and other content-heavy pages.
+
+    Args:
+        link (str): The URL of the web page to scrape.
+
+    Returns:
+        str: A cleaned and readable concatenation of the page's core textual elements.
+    """
+    
+    try:
+        # Add a header to mimic a real browser. This is crucial for avoiding blocks.
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+
+        # Automatically detect and use system-configured proxies
+        proxies = requests.utils.getproxies()
+        response = requests.get(link, headers=headers, proxies=proxies, timeout=10)
+        
+        response.raise_for_status()  # Raise an exception for bad status codes (e.g., 404 Not Found)
+        soup = BeautifulSoup(response.content, "html.parser")
+
+        tags_to_find = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "code"]
+        tags = soup.find_all(tags_to_find)
+        
+        cleaned = []
+        for tag in tags:
+            text = tag.get_text(strip=True)
+            if text:
+                cleaned.append(text)
+
+        return "\n\n".join(cleaned)
+        
+    except Exception as e:
+        return f"Error scraping {link}: {str(e)}"
 
 # Create the Tavily search tool
 search_tool = TavilySearchResults(max_results=5)
@@ -623,14 +762,13 @@ all_tools = [get_username, GetSystemInfo,
         Save_to_clipboard, get_clipboard_content, 
         list_directory_tree, find_files, 
         Delete, Create, Move, Rename,
-        Write, Read, open_file_or_app,
+        Write, Read, zip_files, unzip_file, open_file_or_app,
         search_tool,
         Current_time, SeeScreen, get_active_window_title, 
-        zip_files, unzip_file,
         execute_shell_command, 
-        ask_document, summarize_content]
+        ask_document, summarize_content,
+        SmartWebScraper]
 
 
 # Create agent 🤖
 agent = llm.bind_tools(all_tools)
-
