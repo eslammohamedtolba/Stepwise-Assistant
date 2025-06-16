@@ -238,7 +238,7 @@ class FloatingCircle(tk.Tk):
         canvas.itemconfig(1, fill=BUTTON_BG_NORMAL) # 1 is the ID of the oval
         canvas.itemconfig(2, fill=TEXT_COLOR_NORMAL) # 2 is the ID of the text
         
-        # --- FIX: If the icon exists, destroy it and nullify the variable ---
+        # If the icon exists, destroy it and nullify the variable ---
         if self.minimized_chat_icon:
             self.minimized_chat_icon.destroy()
             self.minimized_chat_icon = None
@@ -248,7 +248,7 @@ class FloatingCircle(tk.Tk):
 
     def handle_chat_minimize(self):
         if self.chat_window and self.chat_window.winfo_viewable():
-            # --- FIX: Only create the icon if it doesn't already exist ---
+            # Only create the icon if it doesn't already exist ---
             if not self.minimized_chat_icon:
                 self.minimized_chat_icon = tk.Label(self, text="💬", bg=PRIMARY_COLOR, fg=BUTTON_BG_NORMAL, font=("Segoe UI Emoji", 18), cursor="hand2")
                 self.minimized_chat_icon.bind("<Button-1>", lambda e: self.restore_chat())
@@ -256,7 +256,7 @@ class FloatingCircle(tk.Tk):
 
     def restore_chat(self):
         if self.chat_window:
-            # --- FIX: Destroy the icon when restoring the chat ---
+            # Destroy the icon when restoring the chat ---
             if self.minimized_chat_icon:
                 self.minimized_chat_icon.destroy()
                 self.minimized_chat_icon = None
