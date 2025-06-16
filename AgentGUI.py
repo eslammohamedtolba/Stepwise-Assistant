@@ -14,15 +14,26 @@ CHAT_BG = "#2B2B2B"
 AI_SENDER_COLOR = "#57A6FF"
 USER_SENDER_COLOR = "#34D399"
 
+# --- Add new colors for hover states ---
+BUTTON_HOVER_COLOR = "#f0f0f0"
+CLOSE_BUTTON_HOVER_COLOR = "#D10000"
+HEADER_BUTTON_HOVER_BG = "#3C3C3C"
+SEND_BUTTON_HOVER_BG = "#005999"
+
+# --- Add a color for the disabled button state
+DISABLED_BUTTON_COLOR = "#555555"
+
 # --- Scrollbar dark theme colors ---
 SCROLLBAR_TROUGH = "#2E2E2E"
 SCROLLBAR_KNOB = "#555555"
 SCROLLBAR_KNOB_ACTIVE = "#676767"
 ARROW_COLOR = "#999999"
 
+
 class ChatWindow(tk.Toplevel):
     def __init__(self, master, pos_x, pos_y, on_send_callback, on_close_callback, on_minimize_callback):
         super().__init__(master)
+        self.is_ai_thinking = False
         self.on_send_callback = on_send_callback
         self.on_close_callback = on_close_callback
         self.on_minimize_callback = on_minimize_callback
@@ -42,7 +53,7 @@ class ChatWindow(tk.Toplevel):
         
         style.configure("Custom.TEntry", padding=(10, 8, 10, 8), relief="flat", background="#3C3C3C", fieldbackground="#3C3C3C", foreground="white", insertcolor="white")
         style.map("Custom.TEntry", fieldbackground=[('focus', '#3C3C3C')], relief=[('focus', 'flat')])
-
+        
         header = tk.Frame(self, bg="#1E1E1E", height=40)
         header.pack(fill="x")
         header.bind("<ButtonPress-1>", self.start_move)
@@ -68,6 +79,9 @@ class ChatWindow(tk.Toplevel):
         self.text_area = tk.Text(conversation_frame, bg=CHAT_BG, fg="white", font=("Arial", 12), wrap="word", relief="flat", state="disabled", yscrollcommand=self.scrollbar.set)
         self.scrollbar.config(command=self.text_area.yview)
         
+        # Add the tag configuration AFTER the text_area is created
+        self.text_area.tag_configure("italic", font=font.Font(slant="italic"))
+
         self.scrollbar.pack(side="right", fill="y")
         self.text_area.pack(side="left", fill="both", expand=True)
 
@@ -78,8 +92,18 @@ class ChatWindow(tk.Toplevel):
         self.entry.pack(fill="x", expand=True, side="left")
         self.entry.bind("<Return>", self.send_message)
 
-        send_button = tk.Button(input_frame, text="➤", bg=PRIMARY_COLOR, fg="white", font=("Arial", 14, "bold"), relief="flat", command=self.send_message, height=1)
-        send_button.pack(side="right", padx=(5, 0), fill="y")
+        self.send_button = tk.Button(input_frame, text="➤", bg=PRIMARY_COLOR, fg="white", font=("Arial", 14, "bold"), relief="flat", command=self.send_message, height=1, activebackground=SEND_BUTTON_HOVER_BG, activeforeground="white")
+        self.send_button.pack(side="right", padx=(5, 0), fill="y")
+
+        # Bind hover effects to all the standard buttons
+        self.bind_hover(self.send_button, SEND_BUTTON_HOVER_BG, PRIMARY_COLOR)
+        self.bind_hover(close_button, CLOSE_BUTTON_HOVER_COLOR, "#1E1E1E")
+        self.bind_hover(minimize_button, HEADER_BUTTON_HOVER_BG, "#1E1E1E")
+
+    # New helper function to bind events to standard tk.Buttons
+    def bind_hover(self, button, hover_bg, normal_bg):
+        button.bind("<Enter>", lambda e: button.config(bg=hover_bg, cursor="hand2"))
+        button.bind("<Leave>", lambda e: button.config(bg=normal_bg, cursor=""))
 
     def handle_focus_out(self, event):
         # Only minimize if focus is truly lost from the entire app, not just moving between widgets.
@@ -123,25 +147,29 @@ class ChatWindow(tk.Toplevel):
                 text_area.insert(tk.END, "\n")
 
     def add_message(self, sender, message):
+        # We must temporarily enable the text area to modify it
         self.text_area.config(state="normal")
 
+        # Now, add the new message from either the "You" or "AI"
         sender_font = font.Font(family="Arial", size=12, weight="bold")
-
-        if sender == "AI":
-            tag_name = "ai_sender"
-            color = AI_SENDER_COLOR
-        else:
-            tag_name = "user_sender"
-            color = USER_SENDER_COLOR
-
+        tag_name, color = ("ai_sender", AI_SENDER_COLOR) if sender == "AI" else ("user_sender", USER_SENDER_COLOR)
         self.text_area.tag_configure(tag_name, font=sender_font, foreground=color)
-
-        self.text_area.insert(tk.END, f"{sender}: ", tag_name)
-
-        # 👇 Format and insert message with styling
+        
+        # We add a newline before the sender to ensure it's on a new line
+        self.text_area.insert(tk.END, f"\n{sender}: ", tag_name)
         self.format_message(self.text_area, message)
 
-        self.text_area.insert(tk.END, "\n")
+        # Finally, update the state based on who sent the message.
+        if sender == "You":
+            # If the user just spoke, bracket the "thinking".
+            self.text_area.insert(tk.END, "\nAI is thinking...", ("ai_sender", "italic"))
+        
+        elif sender == "AI":
+            # If the AI just responded, the turn is over. Reset the state.
+            self.is_ai_thinking = False
+            self.send_button.config(bg=PRIMARY_COLOR)
+        
+        # Re-disable the text area and scroll to the bottom
         self.text_area.config(state="disabled")
         self.text_area.see(tk.END)
 
@@ -151,11 +179,24 @@ class ChatWindow(tk.Toplevel):
     def minimize_window(self):
         if self.on_minimize_callback: self.on_minimize_callback()
         self.withdraw()
+
     def send_message(self, event=None):
+        # Check the state flag. If the AI is thinking, do nothing.
+        if self.is_ai_thinking:
+            return  # Ignore send attempts while processing
+
         user_input = self.entry.get().strip()
         if user_input:
+            # Set the flag to True and visually disable the button
+            self.is_ai_thinking = True
+            self.send_button.config(bg=DISABLED_BUTTON_COLOR)
+
+            # The user's message is displayed via the queue, so just send it.
+            if self.on_send_callback:
+                self.on_send_callback(user_input)
+            
             self.entry.delete(0, tk.END)
-            if self.on_send_callback: self.on_send_callback(user_input)
+
     def close_window(self):
         if self.on_close_callback: self.on_close_callback()
         self.destroy()
@@ -212,21 +253,42 @@ class FloatingCircle(tk.Tk):
 
     def create_oval_button(self, x, y, width, height, text, command):
         button_canvas = tk.Canvas(self, width=width, height=height, bg=PRIMARY_COLOR, highlightthickness=0)
-        button_canvas.create_oval(0, 0, width-1, height-1, fill=BUTTON_BG_NORMAL, outline="")
-        button_canvas.create_text(width/2, height/2, text=text, fill=TEXT_COLOR_NORMAL, font=("Arial", 10, "bold"))
+        oval = button_canvas.create_oval(0, 0, width-1, height-1, fill=BUTTON_BG_NORMAL, outline="")
+        button_text = button_canvas.create_text(width/2, height/2, text=text, fill=TEXT_COLOR_NORMAL, font=("Arial", 10, "bold"))
+
+        # Create smarter hover functions that check the application's state.
+        def on_enter(event):
+            # For the "Chat" button, only show the hover effect if the chat is not already open.
+            # For any other button (like "Speak"), always show the hover effect.
+            if text != "Chat" or self.chat_window is None:
+                button_canvas.itemconfig(oval, fill=BUTTON_HOVER_COLOR)
+
+        def on_leave(event):
+            # For the "Chat" button, only reset the color if the chat is not already open.
+            # For any other button (like "Speak"), always reset the color.
+            if text != "Chat" or self.chat_window is None:
+                button_canvas.itemconfig(oval, fill=BUTTON_BG_NORMAL)
+
+        # Bind the new, smarter functions to the hover events.
+        button_canvas.bind("<Enter>", on_enter)
+        button_canvas.bind("<Leave>", on_leave)
+        
         button_canvas.bind("<Button-1>", lambda event: command())
-        button_canvas.bind("<Enter>", lambda e: button_canvas.config(cursor="hand2"))
-        button_canvas.bind("<Leave>", lambda e: button_canvas.config(cursor=""))
+        button_canvas.config(cursor="hand2")
         button_canvas.place(x=x, y=y)
-        return button_canvas, None, None # Return value not used, simplified
+        
+        return button_canvas, oval, button_text
 
     def create_circular_close_button(self, x, y, radius, command):
         btn_canvas = tk.Canvas(self, width=radius*2, height=radius*2, bg=PRIMARY_COLOR, highlightthickness=0)
-        btn_canvas.create_oval(0, 0, radius*2, radius*2, fill=CLOSE_BUTTON_COLOR, outline="")
+        oval = btn_canvas.create_oval(0, 0, radius*2, radius*2, fill=CLOSE_BUTTON_COLOR, outline="")
         btn_canvas.create_text(radius, radius, text="✕", fill="white", font=("Arial", int(radius*0.8), "bold"))
+
+        # Bind hover effects for the circular close button
+        btn_canvas.bind("<Enter>", lambda e: btn_canvas.itemconfig(oval, fill=CLOSE_BUTTON_HOVER_COLOR))
+        btn_canvas.bind("<Leave>", lambda e: btn_canvas.itemconfig(oval, fill=CLOSE_BUTTON_COLOR))
         btn_canvas.bind("<Button-1>", lambda e: command())
-        btn_canvas.bind("<Enter>", lambda e: btn_canvas.config(cursor="hand2"))
-        btn_canvas.bind("<Leave>", lambda e: btn_canvas.config(cursor=""))
+        btn_canvas.config(cursor="hand2")
         btn_canvas.place(x=x, y=y)
 
     def start_move(self, event): self.x = event.x; self.y = event.y
@@ -234,15 +296,19 @@ class FloatingCircle(tk.Tk):
     def do_move(self, event): self.geometry(f"+{self.winfo_x() + event.x - self.x}+{self.winfo_y() + event.y - self.y}")
 
     def on_chat_close(self):
-        canvas, _, _ = self.write_button_info
-        canvas.itemconfig(1, fill=BUTTON_BG_NORMAL) # 1 is the ID of the oval
-        canvas.itemconfig(2, fill=TEXT_COLOR_NORMAL) # 2 is the ID of the text
+        # Correctly unpack all parts: the canvas widget, the oval's ID, and the text's ID
+        canvas, oval_id, text_id = self.write_button_info
         
-        # If the icon exists, destroy it and nullify the variable ---
+        # Reset the button to its normal state (white background, blue text)
+        canvas.itemconfig(oval_id, fill=BUTTON_BG_NORMAL)
+        canvas.itemconfig(text_id, fill=TEXT_COLOR_NORMAL)
+        
+        # If the minimized icon exists, destroy it
         if self.minimized_chat_icon:
             self.minimized_chat_icon.destroy()
             self.minimized_chat_icon = None
         
+        # Reset the chat window state and inform the agent
         self.chat_window = None
         self.input_queue.put("__RESET__")
 
@@ -275,11 +341,15 @@ class FloatingCircle(tk.Tk):
             self.chat_window.entry.focus_set()
 
     def open_chat(self):
+        # If chat window exists, just bring it to the front
         if self.chat_window and self.chat_window.winfo_exists():
-            if not self.chat_window.winfo_viewable(): self.restore_chat()
-            else: self.chat_window.lift()
+            if not self.chat_window.winfo_viewable(): 
+                self.restore_chat()
+            else: 
+                self.chat_window.lift()
             return
         
+        # Calculate the position for the new chat window
         circle_x, circle_y = self.winfo_x(), self.winfo_y()
         chat_width, margin = 400, 20
 
@@ -290,18 +360,22 @@ class FloatingCircle(tk.Tk):
         
         pos_y = circle_y
         
+        # Create the new ChatWindow instance
         self.chat_window = ChatWindow(self, pos_x, pos_y, 
             on_send_callback=self.handle_user_input, 
             on_close_callback=self.on_chat_close,
             on_minimize_callback=self.handle_chat_minimize)
         
+        # Send initial greeting and set focus
         self.output_queue.put(("AI", "Hello! How can I assist you today?"))
-        
         self.chat_window.entry.focus_set()
 
-        canvas, _, _ = self.write_button_info
-        canvas.itemconfig(1, fill=BUTTON_BG_ACTIVE)
-        canvas.itemconfig(2, fill=TEXT_COLOR_ACTIVE)
+        # Correctly unpack all parts to update the button's appearance
+        canvas, oval_id, text_id = self.write_button_info
+        
+        # Set the button to its "active" state (blue background, white text)
+        canvas.itemconfig(oval_id, fill=BUTTON_BG_ACTIVE)
+        canvas.itemconfig(text_id, fill=TEXT_COLOR_ACTIVE)
 
     def speak_placeholder(self):
         if self.chat_window and self.chat_window.winfo_exists():
