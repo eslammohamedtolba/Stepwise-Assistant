@@ -100,10 +100,12 @@ class ChatWindow(tk.Toplevel):
         self.bind_hover(close_button, CLOSE_BUTTON_HOVER_COLOR, "#1E1E1E")
         self.bind_hover(minimize_button, HEADER_BUTTON_HOVER_BG, "#1E1E1E")
 
-    # New helper function to bind events to standard tk.Buttons
+    # helper function to bind events to standard tk.Buttons
     def bind_hover(self, button, hover_bg, normal_bg):
-        button.bind("<Enter>", lambda e: button.config(bg=hover_bg, cursor="hand2"))
-        button.bind("<Leave>", lambda e: button.config(bg=normal_bg, cursor=""))
+        # This lambda checks the 'is_ai_thinking' flag before changing color
+        button.bind("<Enter>", lambda e: button.config(bg=hover_bg, cursor="hand2") if not self.is_ai_thinking else None)
+        # This lambda checks the flag before changing the color back
+        button.bind("<Leave>", lambda e: button.config(bg=normal_bg, cursor="") if not self.is_ai_thinking else None)
 
     def handle_focus_out(self, event):
         # Only minimize if focus is truly lost from the entire app, not just moving between widgets.
@@ -384,3 +386,4 @@ class FloatingCircle(tk.Tk):
     def quit_app(self):
         self.input_queue.put("__EXIT__")
         self.after(200, self.destroy)
+
