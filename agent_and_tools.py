@@ -17,6 +17,8 @@ import subprocess
 import glob
 import zipfile
 from PIL import Image
+import re
+from tavily import TavilyClient
 import mss
 import pygetwindow as gw
 import pypdf
@@ -33,6 +35,7 @@ from langchain_core.prompts import PromptTemplate
 from docx import Document
 from fpdf import FPDF
 import pandas as pd
+
 
 
 load_dotenv()
@@ -752,6 +755,77 @@ def SmartWebScraper(link: str) -> str:
     except Exception as e:
         return f"Error scraping {link}: {str(e)}"
 
+
+tavily_client = TavilyClient()
+
+@tool
+def download_image_by_description(description: str, folder_path: str, number_of_images: int = 1) -> str:
+    """
+    Searches the web for images based on a detailed description and downloads them
+    into a specified local folder.
+
+    Args:
+        description (str): A **highly descriptive, visually-oriented search query**. For best
+                           results, use detailed keywords that describe a scene, subject, style,
+                           and composition.
+                           Example of a good description: "A cinematic, wide-angle photograph of a
+                           solitary lighthouse on a rocky cliff during a stormy sunset".
+                           Example of a bad description: "lighthouse".
+        folder_path (str): The absolute path to the local folder where the image(s) should be saved.
+        number_of_images (int): The number of images to download. Defaults to 1.
+
+    Returns:
+        A string indicating the result of the download operation.
+    """
+    try:
+        os.makedirs(folder_path, exist_ok=True)
+
+        results = tavily_client.search(
+            query=description,
+            search_depth="advanced",
+            include_images=True,
+            max_results=number_of_images * 2
+        )
+
+        image_urls = results.get("images", [])
+        if not image_urls:
+            return f"Error: No images found for the description '{description}'."
+
+        saved_files_count = 0
+        images_to_download = image_urls[:number_of_images]
+        
+        for i, image_url in enumerate(images_to_download):
+            try:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+                response = requests.get(image_url, headers=headers, stream=True, timeout=20)
+                response.raise_for_status()
+
+                image = Image.open(BytesIO(response.content))
+                
+                safe_name = re.sub(r'[^\w\s-]', '', description.lower()).strip()
+                safe_name = re.sub(r'[-\s]+', '_', safe_name)[:50]
+                file_path = os.path.join(folder_path, f"{safe_name}_{i+1}.jpg")
+
+                if image.mode != 'RGB':
+                    image = image.convert('RGB')
+                
+                image.save(file_path, 'jpeg')
+                saved_files_count += 1
+
+            except Exception as e:
+                continue
+
+        if saved_files_count == 0:
+             return "Error: Failed to download any images."
+
+        return f"Successfully downloaded {saved_files_count} image(s) to: {folder_path}"
+
+    except Exception as e:
+        return f"An unexpected error occurred: {str(e)}"
+    
+
 # Create the Tavily search tool
 search_tool = TavilySearchResults(max_results=5)
 
@@ -763,7 +837,7 @@ all_tools = [get_username, GetSystemInfo,
         list_directory_tree, find_files, 
         Delete, Create, Move, Rename,
         Write, Read, zip_files, unzip_file, open_file_or_app,
-        search_tool,
+        search_tool, download_image_by_description,
         Current_time, SeeScreen, get_active_window_title, 
         execute_shell_command, 
         ask_document, summarize_content,
